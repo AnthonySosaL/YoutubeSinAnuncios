@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="8dp">
+
+    <ImageView
+        android:id="@+id/videoImage"
+        android:layout_width="100dp"
+        android:layout_height="56dp"
+        android:scaleType="centerCrop"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        tools:srcCompat="@tools:sample/avatars" />
+
+    <TextView
+        android:id="@+id/videoTitle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:textSize="16sp"
+        app:layout_constraintTop_toTopOf="@id/videoImage"
+        app:layout_constraintBottom_toBottomOf="@id/videoImage"
+        app:layout_constraintStart_toEndOf="@id/videoImage"
+        app:layout_constraintEnd_toEndOf="parent"
+        tools:text="Video Title" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

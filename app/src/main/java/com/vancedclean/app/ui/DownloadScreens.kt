@@ -264,6 +264,10 @@ fun LocalVideoScreen(navController: NavController, id: String) {
                 PlayerView(ctx).apply {
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     useController = true
+                    // Botón de repetir (una vez / en bucle), como en Telegram.
+                    setRepeatToggleModes(androidx.media3.common.util.RepeatModeUtil.REPEAT_TOGGLE_MODE_ONE)
+                    setShowNextButton(false)
+                    setShowPreviousButton(false)
                     this.player = player
                 }
             },

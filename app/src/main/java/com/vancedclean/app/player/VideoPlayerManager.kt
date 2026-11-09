@@ -108,6 +108,17 @@ object VideoPlayerManager {
     /** Canciones de la lista que suena ahora. */
     val queue: StateFlow<List<com.vancedclean.app.download.DownloadEntry>> = _queue.asStateFlow()
 
+    private val _loopVideo = MutableStateFlow(false)
+    /** Repetir el video de YouTube o descargado en bucle (como en Telegram). */
+    val loopVideo: StateFlow<Boolean> = _loopVideo.asStateFlow()
+
+    fun toggleLoopVideo() {
+        _loopVideo.value = !_loopVideo.value
+        if (_localId.value == null || _queue.value.size <= 1) {
+            player?.repeatMode = if (_loopVideo.value) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        }
+    }
+
     private val _localId = MutableStateFlow<String?>(null)
     /** Id de la descarga que suena ahora (reproducción sin internet), o null. */
     val localId: StateFlow<String?> = _localId.asStateFlow()
@@ -311,6 +322,7 @@ object VideoPlayerManager {
 
         _localId.value = null
         player?.shuffleModeEnabled = false
+        player?.repeatMode = if (_loopVideo.value) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         if (fallbackForUrl != metadata.url) {
             fallbackForUrl = metadata.url
             failedQualities.clear()

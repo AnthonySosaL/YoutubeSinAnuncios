@@ -13,6 +13,7 @@ import com.vancedclean.app.ui.InstagramLoginScreen
 import com.vancedclean.app.ui.LocalVideoScreen
 import com.vancedclean.app.ui.MusicScreen
 import com.vancedclean.app.ui.NowPlayingScreen
+import com.vancedclean.app.ui.MusicListScreen
 import com.vancedclean.app.ui.MyDownloadsScreen
 import com.vancedclean.app.ui.LibraryScreen
 import com.vancedclean.app.ui.LoginScreen
@@ -75,6 +76,13 @@ fun NavGraph(
         composable(Screen.Music.route) { MusicScreen(navController) }
 
         composable(Screen.NowPlaying.route) { NowPlayingScreen(navController) }
+
+        composable(
+            route = Screen.MusicList.route,
+            arguments = listOf(navArgument(Screen.MusicList.ARG_ID) { type = NavType.StringType })
+        ) { entry ->
+            MusicListScreen(navController, entry.arguments?.getString(Screen.MusicList.ARG_ID).orEmpty())
+        }
 
         composable(Screen.InstagramLogin.route) { InstagramLoginScreen(navController) }
 

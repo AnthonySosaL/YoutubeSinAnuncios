@@ -86,6 +86,11 @@ import coil.compose.AsyncImage
 import com.vancedclean.app.download.DownloadEntry
 import com.vancedclean.app.download.DownloadStore
 import com.vancedclean.app.download.MediaLibrary
+import com.vancedclean.app.download.MusicLists
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import com.vancedclean.app.download.formatBytes
 import com.vancedclean.app.navigation.Screen
 import com.vancedclean.app.player.VideoPlayerManager
@@ -107,13 +112,15 @@ fun MusicScreen(navController: NavController) {
     var query by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf(SongSort.RECIENTES) }
     var toDelete by remember { mutableStateOf<DownloadEntry?>(null) }
+    var tab by remember { mutableStateOf(0) }
+    val favorites by MusicLists.favorites.collectAsState()
 
     // Permiso de lectura: hace falta para volver a encontrar las canciones tras reinstalar la app.
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        scope.launch(Dispatchers.IO) { DownloadStore.refresh(context) }
+        scope.launch(Dispatchers.IO) { DownloadStore.refresh(context); MusicLists.reimportIfEmpty(context) }
     }
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) { DownloadStore.load(context) }
+        withContext(Dispatchers.IO) { DownloadStore.load(context); MusicLists.load(context) }
         val missing = MediaLibrary.readPermissions().filter {
             ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
         }
@@ -122,6 +129,7 @@ fun MusicScreen(navController: NavController) {
 
     val songs = entries.filter { it.isMusic }
     val shown = songs
+        .filter { tab != 1 || it.uri in favorites }
         .filter { query.isBlank() || it.title.contains(query, true) || it.author.contains(query, true) }
         .let { list ->
             when (sort) {
@@ -149,6 +157,17 @@ fun MusicScreen(navController: NavController) {
         bottomBar = { MusicMiniBar { navController.navigate(Screen.NowPlaying.route) } }
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
+            item {
+                TabRow(selectedTabIndex = tab) {
+                    Tab(tab == 0, { tab = 0 }, text = { Text("Todas") })
+                    Tab(tab == 1, { tab = 1 }, text = { Text("Favoritas (${favorites.size})") })
+                    Tab(tab == 2, { tab = 2 }, text = { Text("Listas") })
+                }
+            }
+            if (tab == 2) {
+                item { MusicListsTab(navController) }
+                return@LazyColumn
+            }
             item {
                 OutlinedTextField(
                     value = query,
@@ -228,7 +247,7 @@ fun MusicScreen(navController: NavController) {
                 }
             }
             itemsIndexed(shown, key = { _, s -> s.id }) { index, song ->
-                SongRow(song, highlighted = song.id == current, onDelete = { toDelete = song }) {
+                SongRow(song, highlighted = song.id == current, actions = { SongActions(song, onDelete = { toDelete = song }) }) {
                     VideoPlayerManager.playLocal(context, shown, startIndex = index)
                 }
             }
@@ -264,6 +283,15 @@ fun NowPlayingScreen(navController: NavController) {
                     }
                 },
                 actions = {
+                    song?.let { s ->
+                        val favs by MusicLists.favorites.collectAsState()
+                        val fav = s.uri in favs
+                        IconButton(onClick = { MusicLists.toggleFavorite(context, s.uri) }) {
+                            Icon(if (fav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                if (fav) "Quitar de favoritas" else "Agregar a favoritas",
+                                tint = if (fav) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
                     Box {
                         IconButton(onClick = { sleepMenu = true }) {
                             Icon(Icons.Default.Bedtime, contentDescription = "Temporizador",
@@ -360,7 +388,7 @@ fun NowPlayingScreen(navController: NavController) {
                     modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp))
             }
             itemsIndexed(queue, key = { _, s -> "q-" + s.id }) { index, s ->
-                SongRow(s, highlighted = s.id == currentId, onDelete = null) { VideoPlayerManager.playQueueIndex(index) }
+                SongRow(s, highlighted = s.id == currentId) { VideoPlayerManager.playQueueIndex(index) }
             }
         }
     }
@@ -402,7 +430,7 @@ fun MusicMiniBar(onOpen: () -> Unit) {
 }
 
 @Composable
-private fun SongRow(song: DownloadEntry, highlighted: Boolean, onDelete: (() -> Unit)?, onClick: () -> Unit) {
+fun SongRow(song: DownloadEntry, highlighted: Boolean, actions: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth()
             .background(if (highlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
@@ -420,7 +448,7 @@ private fun SongRow(song: DownloadEntry, highlighted: Boolean, onDelete: (() -> 
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1
             )
         }
-        if (onDelete != null) IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "Borrar") }
+        actions?.invoke()
     }
 }
 
@@ -449,7 +477,9 @@ fun EntryArt(entry: DownloadEntry, modifier: Modifier) {
 fun DeleteEntryDialog(entry: DownloadEntry, onDone: () -> Unit) {
     val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
-        if (r.resultCode == android.app.Activity.RESULT_OK) DownloadStore.forget(context, entry.id)
+        if (r.resultCode == android.app.Activity.RESULT_OK) {
+            DownloadStore.forget(context, entry.id); MusicLists.forgetSong(context, entry.uri)
+        }
         onDone()
     }
     AlertDialog(
@@ -463,7 +493,7 @@ fun DeleteEntryDialog(entry: DownloadEntry, onDone: () -> Unit) {
                     else { java.io.File(entry.path).delete(); null }
                 }.getOrNull()
                 if (ask != null) launcher.launch(IntentSenderRequest.Builder(ask).build())
-                else { DownloadStore.forget(context, entry.id); onDone() }
+                else { DownloadStore.forget(context, entry.id); MusicLists.forgetSong(context, entry.uri); onDone() }
             }) { Text("Borrar") }
         },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancelar") } }

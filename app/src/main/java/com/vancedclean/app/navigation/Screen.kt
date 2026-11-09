@@ -31,6 +31,11 @@ sealed class Screen(val route: String) {
     data object MyDownloads : Screen("downloads")
     data object Music : Screen("music")
     data object NowPlaying : Screen("now_playing")
+
+    data object MusicList : Screen("music_list/{id}") {
+        const val ARG_ID = "id"
+        fun createRoute(id: String): String = "music_list/" + android.net.Uri.encode(id)
+    }
     data object InstagramLogin : Screen("instagram_login")
 
     data object LocalVideo : Screen("local/{id}") {

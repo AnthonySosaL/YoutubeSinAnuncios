@@ -37,6 +37,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -274,6 +276,28 @@ fun PlayerGestureOverlay(
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.35f))
             ) {
+                // Repetir el video en bucle (como en Telegram).
+                val loop by VideoPlayerManager.loopVideo.collectAsState()
+                IconButton(
+                    onClick = {
+                        VideoPlayerManager.toggleLoopVideo()
+                        android.widget.Toast.makeText(
+                            context, if (!loop) "Repetir video: activado" else "Repetir video: desactivado",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        scheduleHide()
+                    },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 4.dp, end = 52.dp)
+                ) {
+                    Icon(
+                        if (loop) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                        contentDescription = if (loop) "Repetir video: activado" else "Repetir video",
+                        tint = if (loop) Color(0xFFFF4D4D) else Color.White
+                    )
+                }
+
                 // Ajustes del video: calidad, velocidad y subtítulos.
                 IconButton(
                     onClick = {

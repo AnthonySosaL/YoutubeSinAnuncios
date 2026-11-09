@@ -434,6 +434,8 @@ object VideoPlayerManager {
     }
 
     fun stopBackgroundPlayback() {
+        // Soltar la sesión primero: si no, el sistema mantiene el servicio y su notificación.
+        BackgroundPlaybackService.instance?.shutdown()
         val context = appContext ?: return
         try {
             context.stopService(Intent(context, BackgroundPlaybackService::class.java))

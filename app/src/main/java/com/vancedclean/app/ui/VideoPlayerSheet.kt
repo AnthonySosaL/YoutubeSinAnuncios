@@ -276,6 +276,8 @@ fun VideoPlayerSheet(navController: NavController) {
                                 modifier = Modifier.align(Alignment.Center),
                                 color = Color.White
                             )
+                            uiState is PlayerUiState.Error && !minimized ->
+                                PlayerErrorBox((uiState as PlayerUiState.Error).message) { viewModel.retry() }
                             playerError != null && !minimized -> PlayerErrorBox(playerError.orEmpty()) {
                                 VideoPlayerManager.clearError()
                                 video?.let { VideoPlayerManager.playSource(it.source, it.toNowPlaying()) }

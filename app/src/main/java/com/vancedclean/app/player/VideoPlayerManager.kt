@@ -75,6 +75,11 @@ object VideoPlayerManager {
     private val _speed = MutableStateFlow(1f)
     val speed: StateFlow<Float> = _speed.asStateFlow()
 
+    /** Calidades que ya fallaron en este video (para probar otra automáticamente). */
+    private val failedQualities = mutableSetOf<String>()
+    private var hlsTried = false
+    private var fallbackForUrl: String? = null
+
     private val _endedCount = MutableStateFlow(0)
     /** Aumenta cada vez que un video termina (para la reproducción automática). */
     val endedCount: StateFlow<Int> = _endedCount.asStateFlow()
@@ -102,6 +107,14 @@ object VideoPlayerManager {
 
         override fun onPlayerError(error: PlaybackException) {
             handlePlayerError(error)
+        }
+
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            // Hay video pero el teléfono no puede decodificarlo (solo sonaría el audio): otra calidad.
+            if (tracks.containsType(C.TRACK_TYPE_VIDEO) && !tracks.isTypeSupported(C.TRACK_TYPE_VIDEO)) {
+                android.util.Log.w("ZazaPlayer", "Video no soportado por el decodificador")
+                tryFallback()
+            }
         }
     }
 
@@ -138,6 +151,13 @@ object VideoPlayerManager {
         startPositionMs: Long = 0L,
     ) {
         val currentPlayer = player ?: return
+
+        if (fallbackForUrl != metadata.url) {
+            fallbackForUrl = metadata.url
+            failedQualities.clear()
+            hlsTried = false
+        }
+        if (quality == null) hlsTried = true
 
         _error.value = null
         _currentPosition.value = startPositionMs
@@ -250,6 +270,11 @@ object VideoPlayerManager {
         val currentPlayer = player ?: return
         if (currentPlayer.isPlaying) {
             currentPlayer.pause()
+        } else if (currentPlayer.playbackState == Player.STATE_IDLE) {
+            // Tras un error el reproductor queda parado: hay que volver a prepararlo.
+            _error.value = null
+            currentPlayer.prepare()
+            currentPlayer.play()
         } else {
             if (currentPlayer.playbackState == Player.STATE_ENDED) {
                 currentPlayer.seekTo(0L)
@@ -264,6 +289,7 @@ object VideoPlayerManager {
 
     fun resume() {
         val currentPlayer = player ?: return
+        if (currentPlayer.playbackState == Player.STATE_IDLE) currentPlayer.prepare()
         if (currentPlayer.playbackState == Player.STATE_ENDED) {
             currentPlayer.seekTo(0L)
         }
@@ -311,6 +337,8 @@ object VideoPlayerManager {
             return
         }
 
+        if (tryFallback()) return
+
         stopPositionUpdates()
         _isPlaying.value = false
         _error.value = when (error.errorCode) {
@@ -328,6 +356,28 @@ object VideoPlayerManager {
             PlaybackException.ERROR_CODE_DECODING_FAILED ->
                 "No se pudo decodificar el video"
             else -> error.message ?: "Error de reproducción desconocido"
+        } + " (${error.errorCodeName})"
+    }
+
+    /**
+     * Si falla una calidad (el decodificador del teléfono no la soporta o YouTube rechaza
+     * el enlace), prueba otra sin molestar: primero las que traen audio integrado (H.264,
+     * compatibles con casi todo), luego calidades más bajas y al final HLS.
+     */
+    private fun tryFallback(): Boolean {
+        val src = _source.value ?: return false
+        val meta = _nowPlaying.value ?: return false
+        val current = _quality.value
+        current?.let { failedQualities += it.videoUrl }
+        val remaining = src.qualities.filter { it.videoUrl !in failedQualities }
+        val next = remaining.filter { it.audioUrl == null }.maxByOrNull { it.height }
+            ?: remaining.filter { current != null && it.height < current.height }.maxByOrNull { it.height }
+        val position = player?.currentPosition ?: 0L
+        android.util.Log.w("ZazaPlayer", "Falló ${current?.label ?: "HLS"}; probando ${next?.label ?: if (!hlsTried) "HLS" else "nada"}")
+        return when {
+            next != null -> { playSource(src, meta, next, _subtitle.value, position); true }
+            !hlsTried && !src.hlsUrl.isNullOrBlank() -> { playSource(src, meta, null, _subtitle.value, position); true }
+            else -> false
         }
     }
 

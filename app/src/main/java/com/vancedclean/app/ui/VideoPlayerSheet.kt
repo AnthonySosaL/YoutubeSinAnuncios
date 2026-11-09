@@ -129,8 +129,24 @@ fun VideoPlayerSheet(navController: NavController) {
     val video = (uiState as? PlayerUiState.Success)?.video
     val account by viewModel.account.collectAsState()
     DisposableEffect(video?.url) {
-        video?.let { VideoPlayerManager.playSource(it.source, it.toNowPlaying()) }
+        // Si el reproductor ya pasó solo a este video (cola), no volver a empezarlo.
+        video?.let {
+            if (VideoPlayerManager.nowPlaying.value?.url != it.url) VideoPlayerManager.playSource(it.source, it.toNowPlaying())
+        }
         onDispose { }
+    }
+
+    // El reproductor pasó solo al siguiente video: mostrarlo sin tocar el panel.
+    val autoAdvanced by VideoPlayerManager.autoAdvanced.collectAsState()
+    LaunchedEffect(autoAdvanced) {
+        val next = autoAdvanced ?: return@LaunchedEffect
+        if (next != PlayerSheet.videoUrl.value) PlayerSheet.switchTo(next)
+    }
+
+    // Dejar el siguiente video listo en la cola mientras suena el actual.
+    LaunchedEffect(video?.url) {
+        val current = video ?: return@LaunchedEffect
+        viewModel.prepareNext(current) { source, meta -> VideoPlayerManager.queueNext(source, meta) }
     }
 
     LaunchedEffect(viewModel) {

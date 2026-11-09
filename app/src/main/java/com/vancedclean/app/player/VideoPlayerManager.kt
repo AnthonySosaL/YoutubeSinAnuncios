@@ -114,8 +114,42 @@ object VideoPlayerManager {
 
     fun toggleLoopVideo() {
         _loopVideo.value = !_loopVideo.value
+        if (_loopVideo.value) clearQueued()
         if (_localId.value == null || _queue.value.size <= 1) {
             player?.repeatMode = if (_loopVideo.value) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        }
+    }
+
+    /** Siguiente video ya cargado en el reproductor (para pasar sin cortes, también con la pantalla apagada). */
+    private data class Queued(val source: PlaybackSource, val metadata: NowPlaying, val quality: QualityOption?)
+    private var queued: Queued? = null
+
+    private val _autoAdvanced = MutableStateFlow<String?>(null)
+    /** URL del video al que el reproductor pasó solo (la pantalla debe mostrarlo). */
+    val autoAdvanced: StateFlow<String?> = _autoAdvanced.asStateFlow()
+
+    private var networkRetries = 0
+    private var networkCallbackRegistered = false
+
+    /** Si se agotaron los reintentos sin red, reanudar en cuanto vuelva la conexión. */
+    private fun registerNetworkCallback(context: Context) {
+        if (networkCallbackRegistered) return
+        networkCallbackRegistered = true
+        runCatching {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    scope.launch {
+                        val p = player ?: return@launch
+                        if (wantsToPlay && p.playbackState == Player.STATE_IDLE && _error.value != null) {
+                            _error.value = null
+                            networkRetries = 0
+                            p.prepare()
+                            p.playWhenReady = true
+                        }
+                    }
+                }
+            })
         }
     }
 
@@ -135,7 +169,10 @@ object VideoPlayerManager {
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
-            if (isPlaying) _blockedByCall.value = false
+            if (isPlaying) {
+                _blockedByCall.value = false
+                networkRetries = 0
+            }
             if (!isPlaying) _localId.value?.let { id -> rememberLast(id, player?.currentPosition ?: 0L) }
             if (isPlaying) {
                 startPositionUpdates()
@@ -156,7 +193,10 @@ object VideoPlayerManager {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             val item = mediaItem ?: return
-            if (_localId.value == null) return
+            if (_localId.value == null) {
+                onVideoTransition(item)
+                return
+            }
             if (_sleepAt.value == -1L && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                 // Temporizador "al terminar la canción".
                 player?.pause()
@@ -195,6 +235,7 @@ object VideoPlayerManager {
             .build()
 
         newPlayer.addListener(playerListener)
+        registerNetworkCallback(applicationContext)
         player = newPlayer
         return newPlayer
     }
@@ -344,7 +385,8 @@ object VideoPlayerManager {
             .setArtworkUri(metadata.thumbnailUrl.takeIf { it.isNotBlank() }?.let { Uri.parse(it) })
             .build()
 
-        val mediaSource = buildMediaSource(source, quality, subtitle, mediaMetadata) ?: run {
+        queued = null
+        val mediaSource = buildMediaSource(source, quality, subtitle, mediaMetadata, metadata.url) ?: run {
             _error.value = "No se encontró un stream reproducible para este video"
             return
         }
@@ -362,6 +404,58 @@ object VideoPlayerManager {
         checkBlockedByCall()
 
         appContext?.let { startBackgroundPlayback(it) }
+    }
+
+    /**
+     * Deja el siguiente video cargado detrás del actual: al terminar, el reproductor pasa solo
+     * sin quedarse parado. Así Android no le corta la red a la app con la pantalla apagada
+     * (eso pasaba justo en el hueco entre un video y otro).
+     */
+    fun queueNext(source: PlaybackSource, metadata: NowPlaying) {
+        val p = player ?: return
+        if (_localId.value != null || _loopVideo.value || source.isEmpty) return
+        if (queued?.metadata?.url == metadata.url) return
+        val current = p.currentMediaItemIndex
+        if (p.mediaItemCount > current + 1) p.removeMediaItems(current + 1, p.mediaItemCount)
+        val quality = source.pick(CurrentSettings.value.defaultQuality)
+        val mediaMetadata = MediaMetadata.Builder()
+            .setTitle(metadata.title)
+            .setArtist(metadata.channelName)
+            .setArtworkUri(metadata.thumbnailUrl.takeIf { it.isNotBlank() }?.let { Uri.parse(it) })
+            .build()
+        val ms = buildMediaSource(source, quality, null, mediaMetadata, metadata.url) ?: return
+        p.addMediaSource(ms)
+        queued = Queued(source, metadata, quality)
+    }
+
+    /** Quita el siguiente video en cola (por ejemplo al activar repetir o desactivar la reproducción automática). */
+    fun clearQueued() {
+        val p = player ?: return
+        queued = null
+        if (_localId.value != null) return
+        val current = p.currentMediaItemIndex
+        if (p.mediaItemCount > current + 1) p.removeMediaItems(current + 1, p.mediaItemCount)
+    }
+
+    private fun onVideoTransition(item: MediaItem) {
+        val q = queued ?: return
+        if (item.mediaId != q.metadata.url) return
+        queued = null
+        _nowPlaying.value = q.metadata
+        _source.value = q.source
+        _quality.value = q.quality
+        _subtitle.value = null
+        fallbackForUrl = q.metadata.url
+        failedQualities.clear()
+        hlsTried = false
+        _duration.value = 0L
+        // Quitar el video anterior de la lista del reproductor.
+        scope.launch {
+            val p = player ?: return@launch
+            val idx = p.currentMediaItemIndex
+            if (idx > 0) p.removeMediaItems(0, idx)
+        }
+        _autoAdvanced.value = q.metadata.url
     }
 
     /** Cambia de calidad sin perder la posición. */
@@ -390,11 +484,12 @@ object VideoPlayerManager {
         quality: QualityOption?,
         subtitle: SubtitleOption?,
         metadata: MediaMetadata,
+        mediaId: String = "",
     ): MediaSource? {
         val main: MediaSource = when {
             quality != null -> {
                 val video = ProgressiveMediaSource.Factory(httpFactory).createMediaSource(
-                    MediaItem.Builder().setUri(quality.videoUrl).setMediaMetadata(metadata).build()
+                    MediaItem.Builder().setUri(quality.videoUrl).setMediaId(mediaId).setMediaMetadata(metadata).build()
                 )
                 if (quality.audioUrl == null) video
                 else MergingMediaSource(
@@ -405,7 +500,7 @@ object VideoPlayerManager {
                 )
             }
             !source.hlsUrl.isNullOrBlank() -> HlsMediaSource.Factory(httpFactory).createMediaSource(
-                MediaItem.Builder().setUri(source.hlsUrl).setMediaMetadata(metadata).build()
+                MediaItem.Builder().setUri(source.hlsUrl).setMediaId(mediaId).setMediaMetadata(metadata).build()
             )
             else -> return null
         }
@@ -561,14 +656,28 @@ object VideoPlayerManager {
             return
         }
 
-        if (tryFallback()) return
+        val networkError = error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+            generateSequence(error.cause) { it.cause }.any { it is java.net.UnknownHostException }
+        if (networkError && networkRetries < 4) {
+            // Sin red un momento (pantalla apagada, cambio de Wi‑Fi a datos): reintentar solo.
+            networkRetries++
+            val wait = 3_000L * networkRetries
+            _error.value = null
+            scope.launch {
+                delay(wait)
+                player?.let { it.prepare(); it.playWhenReady = true }
+            }
+            return
+        }
+        if (!networkError && tryFallback()) return
 
         stopPositionUpdates()
         _isPlaying.value = false
         _error.value = when (error.errorCode) {
             PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
             PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
-                "Error de red. Comprueba tu conexión a internet"
+                "Sin conexión a internet. Revisa el Wi‑Fi o los datos y toca Reintentar"
             PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
                 "El servidor rechazó la solicitud del video"
             PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ->

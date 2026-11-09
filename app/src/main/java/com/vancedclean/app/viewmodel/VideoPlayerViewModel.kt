@@ -48,7 +48,97 @@ sealed class PlayerUiState {
     data class Error(val message: String) : PlayerUiState()
 }
 
+/** StreamInfo recientes (el siguiente video ya precargado se abre al instante y sin red). */
+private object StreamCache {
+    private const val MAX_AGE_MS = 4 * 60 * 60 * 1000L // los enlaces de YouTube duran ~6 h
+    private val map = object : LinkedHashMap<String, Pair<Long, StreamInfo>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, StreamInfo>>?) = size > 8
+    }
+
+    @Synchronized
+    fun get(url: String): StreamInfo? =
+        map[url]?.takeIf { System.currentTimeMillis() - it.first < MAX_AGE_MS }?.second
+
+    @Synchronized
+    fun put(url: String, info: StreamInfo) {
+        map[url] = System.currentTimeMillis() to info
+    }
+}
+
+private fun Throwable.isNetwork(): Boolean = generateSequence(this) { it.cause }.any {
+    it is java.net.UnknownHostException || it is java.net.SocketTimeoutException ||
+        it is java.net.ConnectException || it is java.net.NoRouteToHostException ||
+        it is javax.net.ssl.SSLException
+}
+
+/** Mensaje claro en español en vez del texto técnico. */
+private fun friendlyError(e: Throwable): String = when {
+    generateSequence(e) { it.cause }.any { it is java.net.SocketTimeoutException } ->
+        "La conexión está muy lenta. Toca Reintentar."
+    e.isNetwork() -> "Sin conexión a internet. Revisa el Wi‑Fi o los datos y toca Reintentar."
+    else -> e.message ?: "Error cargando el video"
+}
+
 class VideoPlayerViewModel(application: Application) : AndroidViewModel(application) {
+
+    private var lastErrorWasNetwork = false
+
+    /** Cuando vuelve la red tras un error de conexión, reintentar solo. */
+    private val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: android.net.Network) {
+            if (lastErrorWasNetwork && _uiState.value is PlayerUiState.Error) {
+                viewModelScope.launch { retry() }
+            }
+        }
+    }
+
+    init {
+        runCatching {
+            (application.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager)
+                .registerDefaultNetworkCallback(networkCallback)
+        }
+    }
+
+    override fun onCleared() {
+        runCatching {
+            (app.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager)
+                .unregisterNetworkCallback(networkCallback)
+        }
+        super.onCleared()
+    }
+
+    private var prepareJob: Job? = null
+
+    /**
+     * Precarga el primer video relacionado (si la reproducción automática está activada) y lo
+     * entrega a [onReady] para dejarlo en la cola del reproductor.
+     */
+    fun prepareNext(current: VideoDetail, onReady: (PlaybackSource, com.vancedclean.app.player.NowPlaying) -> Unit) {
+        prepareJob?.cancel()
+        val next = current.relatedVideos.firstOrNull() ?: return
+        if (!com.vancedclean.app.data.CurrentSettings.value.autoplay) return
+        prepareJob = viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(8_000) // dejar que arranque primero el video actual
+            val info = StreamCache.get(next.url) ?: run {
+                var result: StreamInfo? = null
+                for (attempt in 0 until 3) {
+                    result = runCatching { StreamInfo.getInfo(NewPipe.getService(0), next.url) }.getOrNull()
+                    if (result != null) break
+                    kotlinx.coroutines.delay(5_000L * (attempt + 1))
+                }
+                result?.also { StreamCache.put(next.url, it) }
+            } ?: return@launch
+            val source = PlaybackSource.from(info)
+            if (source.isEmpty) return@launch
+            val meta = com.vancedclean.app.player.NowPlaying(
+                url = next.url,
+                title = info.name.orEmpty(),
+                channelName = info.uploaderName.orEmpty(),
+                thumbnailUrl = info.thumbnails.maxByOrNull { it.height }?.url ?: next.thumbnailUrl,
+            )
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onReady(source, meta) }
+        }
+    }
 
     private var videoUrl: String = ""
     private var loadJob: Job? = null
@@ -102,7 +192,21 @@ class VideoPlayerViewModel(application: Application) : AndroidViewModel(applicat
             try {
                 NewPipeSetup.ensure()
 
-                val streamInfo = StreamInfo.getInfo(NewPipe.getService(0), videoUrl)
+                // Precargado (siguiente video) o pedido con reintentos si la red falla un momento.
+                var streamInfo: StreamInfo? = StreamCache.get(videoUrl)
+                var attempt = 0
+                while (streamInfo == null) {
+                    try {
+                        streamInfo = StreamInfo.getInfo(NewPipe.getService(0), videoUrl)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (!e.isNetwork() || attempt >= 3) throw e
+                        attempt++
+                        kotlinx.coroutines.delay(3_000L * attempt)
+                    }
+                }
+                StreamCache.put(videoUrl, streamInfo)
                 val source = PlaybackSource.from(streamInfo)
                 if (source.isEmpty) {
                     _uiState.value = PlayerUiState.Error("No se encontró un stream reproducible para este video")
@@ -155,7 +259,8 @@ class VideoPlayerViewModel(application: Application) : AndroidViewModel(applicat
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _uiState.value = PlayerUiState.Error(e.message ?: "Error cargando el video")
+                lastErrorWasNetwork = e.isNetwork()
+                _uiState.value = PlayerUiState.Error(friendlyError(e))
             }
         }
     }

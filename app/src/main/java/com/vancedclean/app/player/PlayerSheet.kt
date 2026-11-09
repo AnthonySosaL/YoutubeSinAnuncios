@@ -45,6 +45,11 @@ object PlayerSheet {
         expand()
     }
 
+    /** Muestra otro video sin abrir ni cerrar el panel (paso automático al siguiente). */
+    fun switchTo(url: String) {
+        _videoUrl.value = url
+    }
+
     fun expand() = request(Target.EXPANDED)
 
     fun minimize() = request(Target.MINIMIZED)

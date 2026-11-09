@@ -117,6 +117,7 @@ fun VideoPlayerSheet(navController: NavController) {
     val nowPlaying by VideoPlayerManager.nowPlaying.collectAsState()
     val isPlaying by VideoPlayerManager.isPlaying.collectAsState()
     val playerError by VideoPlayerManager.error.collectAsState()
+    val blockedByCall by VideoPlayerManager.blockedByCall.collectAsState()
 
     // Cerrado desde la notificación: quitamos el panel.
     var hadMedia by remember { mutableStateOf(false) }
@@ -172,6 +173,7 @@ fun VideoPlayerSheet(navController: NavController) {
                     onToggleFullscreen = { setFullscreen(false) }
                 )
             }
+            if (blockedByCall && !inPip) CallBlockedBox()
         }
         return
     }
@@ -271,18 +273,6 @@ fun VideoPlayerSheet(navController: NavController) {
                     // 0: video
                     Box(Modifier.background(Color.Black)) {
                         PlayerSurface(player, Modifier.fillMaxSize())
-                        when {
-                            uiState is PlayerUiState.Loading && !fullyMini -> CircularProgressIndicator(
-                                modifier = Modifier.align(Alignment.Center),
-                                color = Color.White
-                            )
-                            uiState is PlayerUiState.Error && !minimized ->
-                                PlayerErrorBox((uiState as PlayerUiState.Error).message) { viewModel.retry() }
-                            playerError != null && !minimized -> PlayerErrorBox(playerError.orEmpty()) {
-                                VideoPlayerManager.clearError()
-                                video?.let { VideoPlayerManager.playSource(it.source, it.toNowPlaying()) }
-                            }
-                        }
                         PlayerGestureOverlay(
                             modifier = Modifier.fillMaxSize(),
                             isFullscreen = false,
@@ -292,6 +282,20 @@ fun VideoPlayerSheet(navController: NavController) {
                             onDragDown = dragFromVideo,
                             onDragRelease = releaseFromVideo
                         )
+                        // Avisos encima de la capa de gestos para que sus botones reciban el toque.
+                        when {
+                            uiState is PlayerUiState.Loading && !fullyMini -> CircularProgressIndicator(
+                                modifier = Modifier.align(Alignment.Center),
+                                color = Color.White
+                            )
+                            blockedByCall && !minimized -> CallBlockedBox()
+                            uiState is PlayerUiState.Error && !minimized ->
+                                PlayerErrorBox((uiState as PlayerUiState.Error).message) { viewModel.retry() }
+                            playerError != null && !minimized -> PlayerErrorBox(playerError.orEmpty()) {
+                                VideoPlayerManager.clearError()
+                                video?.let { VideoPlayerManager.playSource(it.source, it.toNowPlaying()) }
+                            }
+                        }
                     }
                     // 1: título y botones del mini reproductor
                     MiniInfo(
@@ -435,6 +439,25 @@ private fun MiniInfo(title: String, channel: String, isPlaying: Boolean, modifie
         IconButton(onClick = { PlayerSheet.close() }) {
             Icon(Icons.Default.Close, contentDescription = "Cerrar")
         }
+    }
+}
+
+/** Aviso cuando una llamada en curso impide reproducir (Android no da el audio a otras apps). */
+@Composable
+private fun CallBlockedBox() {
+    Column(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.8f)).padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            "Hay una llamada en curso. Android pausa los videos mientras dura.",
+            color = Color.White,
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(12.dp))
+        Button(onClick = { VideoPlayerManager.playDuringCall() }) { Text("Reproducir igual") }
     }
 }
 

@@ -80,6 +80,18 @@ object VideoPlayerManager {
     private var hlsTried = false
     private var fallbackForUrl: String? = null
 
+    private val _blockedByCall = MutableStateFlow(false)
+    /** true si el usuario quiere reproducir pero una llamada en curso no deja (Android no da el audio). */
+    val blockedByCall: StateFlow<Boolean> = _blockedByCall.asStateFlow()
+    private var wantsToPlay = false
+    private var handlesAudioFocus = true
+    private var callCheckJob: Job? = null
+
+    private val mediaAudioAttributes = AudioAttributes.Builder()
+        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+        .setUsage(C.USAGE_MEDIA)
+        .build()
+
     private val _endedCount = MutableStateFlow(0)
     /** Aumenta cada vez que un video termina (para la reproducción automática). */
     val endedCount: StateFlow<Int> = _endedCount.asStateFlow()
@@ -92,6 +104,7 @@ object VideoPlayerManager {
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
+            if (isPlaying) _blockedByCall.value = false
             if (isPlaying) {
                 startPositionUpdates()
             } else {
@@ -124,13 +137,9 @@ object VideoPlayerManager {
         val applicationContext = context.applicationContext
         appContext = applicationContext
 
-        val audioAttributes = AudioAttributes.Builder()
-            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-            .setUsage(C.USAGE_MEDIA)
-            .build()
-
+        handlesAudioFocus = true
         val newPlayer = ExoPlayer.Builder(applicationContext)
-            .setAudioAttributes(audioAttributes, true)
+            .setAudioAttributes(mediaAudioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
@@ -185,7 +194,10 @@ object VideoPlayerManager {
         currentPlayer.setMediaSource(mediaSource, startPositionMs)
         currentPlayer.prepare()
         currentPlayer.setPlaybackSpeed(_speed.value)
+        restoreAudioFocusIfNoCall()
         currentPlayer.playWhenReady = true
+        wantsToPlay = true
+        checkBlockedByCall()
 
         appContext?.let { startBackgroundPlayback(it) }
     }
@@ -270,7 +282,14 @@ object VideoPlayerManager {
         val currentPlayer = player ?: return
         if (currentPlayer.isPlaying) {
             currentPlayer.pause()
-        } else if (currentPlayer.playbackState == Player.STATE_IDLE) {
+            wantsToPlay = false
+            _blockedByCall.value = false
+            return
+        }
+        wantsToPlay = true
+        restoreAudioFocusIfNoCall()
+        checkBlockedByCall()
+        if (currentPlayer.playbackState == Player.STATE_IDLE) {
             // Tras un error el reproductor queda parado: hay que volver a prepararlo.
             _error.value = null
             currentPlayer.prepare()
@@ -285,6 +304,44 @@ object VideoPlayerManager {
 
     fun pause() {
         player?.pause()
+        wantsToPlay = false
+        _blockedByCall.value = false
+    }
+
+    /** Reproduce aunque haya una llamada: deja de pedir el audio en exclusiva a Android. */
+    fun playDuringCall() {
+        val currentPlayer = player ?: return
+        handlesAudioFocus = false
+        currentPlayer.setAudioAttributes(mediaAudioAttributes, false)
+        _blockedByCall.value = false
+        wantsToPlay = true
+        if (currentPlayer.playbackState == Player.STATE_IDLE) currentPlayer.prepare()
+        currentPlayer.play()
+    }
+
+    private fun isInCall(): Boolean {
+        val am = appContext?.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return false
+        return am.mode == android.media.AudioManager.MODE_IN_CALL ||
+            am.mode == android.media.AudioManager.MODE_IN_COMMUNICATION ||
+            am.mode == android.media.AudioManager.MODE_RINGTONE
+    }
+
+    /** Tras colgar, volvemos a pedir el audio como cualquier reproductor (pausa con llamadas, etc.). */
+    private fun restoreAudioFocusIfNoCall() {
+        if (!handlesAudioFocus && !isInCall()) {
+            handlesAudioFocus = true
+            player?.setAudioAttributes(mediaAudioAttributes, true)
+        }
+    }
+
+    /** Si el usuario quiso reproducir y no arrancó por una llamada, lo avisamos. */
+    private fun checkBlockedByCall() {
+        callCheckJob?.cancel()
+        callCheckJob = scope.launch {
+            delay(1200)
+            val p = player ?: return@launch
+            _blockedByCall.value = wantsToPlay && handlesAudioFocus && !p.isPlaying && isInCall()
+        }
     }
 
     fun resume() {
@@ -326,6 +383,8 @@ object VideoPlayerManager {
         _source.value = null
         _quality.value = null
         _subtitle.value = null
+        _blockedByCall.value = false
+        wantsToPlay = false
     }
 
     fun handlePlayerError(error: PlaybackException) {

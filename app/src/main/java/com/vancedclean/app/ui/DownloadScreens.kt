@@ -79,6 +79,15 @@ import com.vancedclean.app.download.DownloadQueue
 import com.vancedclean.app.download.DownloadStore
 import com.vancedclean.app.download.DownloadTask
 import com.vancedclean.app.download.TaskState
+import com.vancedclean.app.download.MediaLibrary
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.vancedclean.app.download.InstagramSession
 import com.vancedclean.app.download.formatBytes
 import com.vancedclean.app.navigation.Screen
@@ -178,17 +187,27 @@ private fun pasteFromClipboard(context: Context): String? {
 @Composable
 fun MyDownloadsScreen(navController: NavController) {
     val context = LocalContext.current
-    LaunchedEffect(Unit) { DownloadStore.load(context) }
+    val scope = rememberCoroutineScope()
+    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        scope.launch(Dispatchers.IO) { DownloadStore.refresh(context) }
+    }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { DownloadStore.load(context) }
+        val missing = MediaLibrary.readPermissions().filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) permissions.launch(missing.toTypedArray())
+    }
     val entries by DownloadStore.entries.collectAsState()
     val tasks by DownloadQueue.tasks.collectAsState()
     var tab by remember { mutableIntStateOf(0) }
     var toDelete by remember { mutableStateOf<DownloadEntry?>(null) }
 
-    toDelete?.let { DeleteDialog(it) { toDelete = null } }
+    toDelete?.let { DeleteEntryDialog(it) { toDelete = null } }
 
     Scaffold(
         topBar = { BackTopBar("Mis descargas", navController) },
-        bottomBar = { NowPlayingBar() }
+        bottomBar = { MusicMiniBar { navController.navigate(Screen.NowPlaying.route) } }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             TabRow(selectedTabIndex = tab) {
@@ -209,62 +228,11 @@ fun MyDownloadsScreen(navController: NavController) {
                 items(shown, key = { it.id }) { e ->
                     EntryRow(e, onDelete = { toDelete = e }) {
                         if (e.format == DlFormat.MP4) navController.navigate(Screen.LocalVideo.createRoute(e.id))
-                        else VideoPlayerManager.playLocal(context, listOf(e))
+                        else {
+                            VideoPlayerManager.playLocal(context, listOf(e))
+                            navController.navigate(Screen.NowPlaying.route)
+                        }
                     }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- Música
-
-/** Reproductor de música: solo los MP3 descargados de YouTube desde la app. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MusicScreen(navController: NavController) {
-    val context = LocalContext.current
-    LaunchedEffect(Unit) { DownloadStore.load(context) }
-    val entries by DownloadStore.entries.collectAsState()
-    val songs = entries.filter { it.isMusic }
-    val current by VideoPlayerManager.localId.collectAsState()
-    var toDelete by remember { mutableStateOf<DownloadEntry?>(null) }
-
-    toDelete?.let { DeleteDialog(it) { toDelete = null } }
-
-    Scaffold(
-        topBar = { BackTopBar("Reproductor de música", navController) },
-        bottomBar = { NowPlayingBar() }
-    ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
-            item {
-                Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = songs.isNotEmpty(), onClick = { VideoPlayerManager.playLocal(context, songs) }) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Reproducir todo")
-                    }
-                    FilledTonalButton(enabled = songs.isNotEmpty(), onClick = {
-                        VideoPlayerManager.playLocal(context, songs, startIndex = songs.indices.random(), shuffle = true)
-                    }) {
-                        Icon(Icons.Default.Shuffle, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Aleatorio")
-                    }
-                }
-                Text(
-                    "${songs.size} canciones • Funciona sin internet",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-            }
-            if (songs.isEmpty()) {
-                item { EmptyText("Descarga canciones en MP3 desde YouTube (botón Descargar de un video) y aparecerán aquí.") }
-            }
-            items(songs, key = { it.id }) { song ->
-                EntryRow(song, highlighted = song.id == current, onDelete = { toDelete = song }) {
-                    VideoPlayerManager.playLocal(context, songs, startIndex = songs.indexOf(song))
                 }
             }
         }
@@ -373,7 +341,7 @@ private fun EntryRow(e: DownloadEntry, highlighted: Boolean = false, onDelete: (
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(Modifier.width(112.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-            AsyncImage(model = e.thumbnailUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            EntryArt(e, Modifier.fillMaxSize())
             Icon(
                 if (e.format == DlFormat.MP3) Icons.Default.MusicNote else Icons.Default.VideoLibrary,
                 contentDescription = null, tint = Color.White,
@@ -392,44 +360,5 @@ private fun EntryRow(e: DownloadEntry, highlighted: Boolean = false, onDelete: (
             )
         }
         IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "Borrar") }
-    }
-}
-
-@Composable
-private fun DeleteDialog(entry: DownloadEntry, onDone: () -> Unit) {
-    val context = LocalContext.current
-    AlertDialog(
-        onDismissRequest = onDone,
-        title = { Text("Borrar descarga") },
-        text = { Text("Se borrará \"${entry.title}\" de este teléfono.") },
-        confirmButton = { TextButton(onClick = { DownloadStore.delete(context, entry.id); onDone() }) { Text("Borrar") } },
-        dismissButton = { TextButton(onClick = onDone) { Text("Cancelar") } }
-    )
-}
-
-/** Barra inferior con lo que suena (canción o audio descargado). */
-@Composable
-private fun NowPlayingBar() {
-    val local by VideoPlayerManager.localId.collectAsState()
-    val now by VideoPlayerManager.nowPlaying.collectAsState()
-    val playing by VideoPlayerManager.isPlaying.collectAsState()
-    val item = now ?: return
-    if (local == null) return
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant, tonalElevation = 2.dp) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 22.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                Text(item.channelName, maxLines = 1, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = { VideoPlayerManager.previous() }) { Icon(Icons.Default.SkipPrevious, "Anterior") }
-            IconButton(onClick = { VideoPlayerManager.togglePlayPause() }) {
-                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pausar" else "Reproducir")
-            }
-            IconButton(onClick = { VideoPlayerManager.next() }) { Icon(Icons.Default.SkipNext, "Siguiente") }
-        }
     }
 }

@@ -50,20 +50,26 @@ fun InstagramLoginScreen(navController: NavController) {
                 factory = { ctx ->
                     var done = false
                     WebView(ctx).apply {
+                        // Alto completo: con "ajustar al contenido" la web de Instagram (que usa
+                        // height:100%) mide 0 y la pantalla se ve en blanco.
+                        layoutParams = android.view.ViewGroup.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                        )
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.allowFileAccess = false
                         settings.allowContentAccess = false
-                        // Instagram no dibuja su web si detecta el navegador interno ("; wv"):
-                        // usamos el User-Agent de Chrome móvil y aceptamos sus cookies de terceros.
-                        settings.userAgentString = android.webkit.WebSettings.getDefaultUserAgent(ctx)
-                            .replace("; wv", "").replace(Regex("""Version/\d+\.\d+ """), "")
+                        // Igual que SnapTube: User-Agent del sistema, almacenamiento web y base de datos
+                        // activos, y cookies de terceros (el login de Instagram usa facebook.com).
+                        @Suppress("DEPRECATION")
+                        settings.databaseEnabled = true
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String?) {
                                 val cookies = CookieManager.getInstance().getCookie("https://www.instagram.com").orEmpty()
-                                if ("sessionid=" in cookies && !done) {
+                                if ("sessionid=" in cookies && !done && url.orEmpty().startsWith("https://www.instagram.com")) {
                                     done = true
                                     InstagramSession.save(context, cookies)
                                     toast(context, "Sesión de Instagram iniciada")

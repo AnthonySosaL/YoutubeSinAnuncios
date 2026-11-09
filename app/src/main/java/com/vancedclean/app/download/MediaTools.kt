@@ -67,6 +67,8 @@ object MediaTools {
         bitrateKbps: Int,
         title: String,
         artist: String,
+        album: String = "",
+        cover: ByteArray? = null,
         onProgress: (Float) -> Unit,
     ) {
         val ex = MediaExtractor().apply { setDataSource(input.absolutePath) }
@@ -79,7 +81,7 @@ object MediaTools {
         codec.start()
 
         val out = BufferedOutputStream(FileOutputStream(output), 256 * 1024)
-        out.write(id3v2(title, artist))
+        out.write(id3v2(title, artist, album, cover))
         var encoder: Mp3Encoder? = null
         var channels = inFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
         var sampleRate = inFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
@@ -148,8 +150,8 @@ object MediaTools {
         return frames * 2
     }
 
-    /** Etiqueta ID3v2.3 mínima con título (TIT2) y artista (TPE1) en UTF-16. */
-    private fun id3v2(title: String, artist: String): ByteArray {
+    /** Etiqueta ID3v2.3: título, artista, álbum (marca "Zaza · YouTube") y portada JPEG. */
+    private fun id3v2(title: String, artist: String, album: String, cover: ByteArray?): ByteArray {
         fun frame(id: String, text: String): ByteArray {
             val body = byteArrayOf(1) + byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + text.toByteArray(Charsets.UTF_16LE)
             val size = body.size
@@ -157,7 +159,18 @@ object MediaTools {
                 (size shr 24).toByte(), (size shr 16).toByte(), (size shr 8).toByte(), size.toByte(), 0, 0
             ) + body
         }
-        val frames = frame("TIT2", title) + frame("TPE1", artist)
+        fun rawFrame(id: String, body: ByteArray): ByteArray {
+            val size = body.size
+            return id.toByteArray() + byteArrayOf(
+                (size shr 24).toByte(), (size shr 16).toByte(), (size shr 8).toByte(), size.toByte(), 0, 0
+            ) + body
+        }
+        var frames = frame("TIT2", title) + frame("TPE1", artist)
+        if (album.isNotBlank()) frames += frame("TALB", album)
+        if (cover != null && cover.isNotEmpty()) {
+            // APIC: codificación 0, MIME, tipo 3 (portada), descripción vacía, imagen.
+            frames += rawFrame("APIC", byteArrayOf(0) + "image/jpeg".toByteArray() + byteArrayOf(0, 3, 0) + cover)
+        }
         val s = frames.size
         val header = "ID3".toByteArray() + byteArrayOf(3, 0, 0,
             ((s shr 21) and 0x7F).toByte(), ((s shr 14) and 0x7F).toByte(),

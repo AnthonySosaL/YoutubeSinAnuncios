@@ -12,6 +12,7 @@ import com.vancedclean.app.ui.DownloadScreen
 import com.vancedclean.app.ui.InstagramLoginScreen
 import com.vancedclean.app.ui.LocalVideoScreen
 import com.vancedclean.app.ui.MusicScreen
+import com.vancedclean.app.ui.NowPlayingScreen
 import com.vancedclean.app.ui.MyDownloadsScreen
 import com.vancedclean.app.ui.LibraryScreen
 import com.vancedclean.app.ui.LoginScreen
@@ -72,6 +73,8 @@ fun NavGraph(
         composable(Screen.MyDownloads.route) { MyDownloadsScreen(navController) }
 
         composable(Screen.Music.route) { MusicScreen(navController) }
+
+        composable(Screen.NowPlaying.route) { NowPlayingScreen(navController) }
 
         composable(Screen.InstagramLogin.route) { InstagramLoginScreen(navController) }
 

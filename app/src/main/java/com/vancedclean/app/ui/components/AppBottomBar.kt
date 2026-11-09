@@ -84,8 +84,12 @@ fun AppBottomSection(
     onHomeReselected: (() -> Unit)? = null
 ) {
     val videoUrl by PlayerSheet.videoUrl.collectAsState()
+    val musicId by VideoPlayerManager.localId.collectAsState()
 
     Column {
+        if (videoUrl == null && musicId != null) {
+            com.vancedclean.app.ui.MusicMiniBar { navController.navigate(Screen.NowPlaying.route) }
+        }
         // El mini reproductor lo dibuja VideoPlayerSheet encima; aquí solo reservamos
         // su espacio para que el contenido no quede tapado.
         if (videoUrl != null) {

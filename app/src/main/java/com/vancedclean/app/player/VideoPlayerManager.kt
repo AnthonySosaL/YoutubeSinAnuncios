@@ -92,6 +92,22 @@ object VideoPlayerManager {
         .setUsage(C.USAGE_MEDIA)
         .build()
 
+    private val _shuffle = MutableStateFlow(false)
+    val shuffle: StateFlow<Boolean> = _shuffle.asStateFlow()
+
+    private val _repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
+    /** Player.REPEAT_MODE_OFF / ALL / ONE */
+    val repeatMode: StateFlow<Int> = _repeatMode.asStateFlow()
+
+    private val _sleepAt = MutableStateFlow<Long?>(null)
+    /** Hora (ms) a la que se apagará la música, o null. -1 = al terminar la canción. */
+    val sleepAt: StateFlow<Long?> = _sleepAt.asStateFlow()
+    private var sleepJob: Job? = null
+
+    private val _queue = MutableStateFlow<List<com.vancedclean.app.download.DownloadEntry>>(emptyList())
+    /** Canciones de la lista que suena ahora. */
+    val queue: StateFlow<List<com.vancedclean.app.download.DownloadEntry>> = _queue.asStateFlow()
+
     private val _localId = MutableStateFlow<String?>(null)
     /** Id de la descarga que suena ahora (reproducción sin internet), o null. */
     val localId: StateFlow<String?> = _localId.asStateFlow()
@@ -109,6 +125,7 @@ object VideoPlayerManager {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
             if (isPlaying) _blockedByCall.value = false
+            if (!isPlaying) _localId.value?.let { id -> rememberLast(id, player?.currentPosition ?: 0L) }
             if (isPlaying) {
                 startPositionUpdates()
             } else {
@@ -129,6 +146,12 @@ object VideoPlayerManager {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             val item = mediaItem ?: return
             if (_localId.value == null) return
+            if (_sleepAt.value == -1L && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                // Temporizador "al terminar la canción".
+                player?.pause()
+                _sleepAt.value = null
+            }
+            rememberLast(item.mediaId, 0L)
             _localId.value = item.mediaId
             _nowPlaying.value = NowPlaying(
                 url = item.localConfiguration?.uri?.toString().orEmpty(),
@@ -182,7 +205,7 @@ object VideoPlayerManager {
         _blockedByCall.value = false
         val mediaItems = items.map { e ->
             MediaItem.Builder()
-                .setUri(Uri.fromFile(e.file))
+                .setUri(e.playUri)
                 .setMediaId(e.id)
                 .setMediaMetadata(
                     MediaMetadata.Builder()
@@ -195,9 +218,12 @@ object VideoPlayerManager {
         }
         val start = items[startIndex.coerceIn(0, items.lastIndex)]
         _localId.value = start.id
-        _nowPlaying.value = NowPlaying(Uri.fromFile(start.file).toString(), start.title, start.author, start.thumbnailUrl.orEmpty())
+        _nowPlaying.value = NowPlaying(start.playUri.toString(), start.title, start.author, start.thumbnailUrl.orEmpty())
         restoreAudioFocusIfNoCall()
+        _queue.value = items
+        _shuffle.value = shuffle
         p.shuffleModeEnabled = shuffle
+        p.repeatMode = _repeatMode.value
         p.setMediaItems(mediaItems, startIndex.coerceIn(0, items.lastIndex), 0L)
         p.prepare()
         p.setPlaybackSpeed(1f)
@@ -208,6 +234,68 @@ object VideoPlayerManager {
     }
 
     fun next() { player?.takeIf { it.hasNextMediaItem() }?.seekToNextMediaItem() }
+
+    fun playQueueIndex(index: Int) {
+        val p = player ?: return
+        if (index in 0 until p.mediaItemCount) {
+            p.seekTo(index, 0L)
+            p.play()
+        }
+    }
+
+    fun toggleShuffle() {
+        _shuffle.value = !_shuffle.value
+        player?.shuffleModeEnabled = _shuffle.value
+    }
+
+    /** Sin repetir → repetir todas → repetir una. */
+    fun cycleRepeat() {
+        _repeatMode.value = when (_repeatMode.value) {
+            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+            else -> Player.REPEAT_MODE_OFF
+        }
+        player?.repeatMode = _repeatMode.value
+    }
+
+    /** Apaga la música en [minutes] minutos; 0 = cancelar; -1 = al terminar la canción. */
+    fun setSleepTimer(minutes: Int) {
+        sleepJob?.cancel()
+        when {
+            minutes == 0 -> _sleepAt.value = null
+            minutes < 0 -> _sleepAt.value = -1L
+            else -> {
+                val at = System.currentTimeMillis() + minutes * 60_000L
+                _sleepAt.value = at
+                sleepJob = scope.launch {
+                    delay(minutes * 60_000L)
+                    player?.pause()
+                    _sleepAt.value = null
+                }
+            }
+        }
+    }
+
+    private const val PREFS = "musica"
+
+    /** Guarda la última canción y posición para "Continuar" al volver a abrir la app. */
+    private fun rememberLast(id: String, position: Long) {
+        appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()
+            ?.putString("last_id", id)?.putLong("last_pos", position)?.apply()
+    }
+
+    fun lastPlayed(context: Context): Pair<String, Long>? {
+        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val id = p.getString("last_id", null) ?: return null
+        return id to p.getLong("last_pos", 0L)
+    }
+
+    /** Reanuda una lista en una canción y posición concretas. */
+    fun resumeLocal(context: Context, items: List<com.vancedclean.app.download.DownloadEntry>, id: String, position: Long) {
+        val index = items.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: return
+        playLocal(context, items, index)
+        player?.seekTo(index, position)
+    }
 
     fun previous() { player?.seekToPrevious() }
 

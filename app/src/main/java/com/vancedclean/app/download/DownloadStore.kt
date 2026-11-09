@@ -1,6 +1,7 @@
 package com.vancedclean.app.download
 
 import android.content.Context
+import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,7 +13,7 @@ enum class DlFormat(val ext: String, val label: String) { MP4("mp4", "Video MP4"
 
 enum class DlSource(val label: String) { YOUTUBE("YouTube"), INSTAGRAM("Instagram") }
 
-/** Un archivo ya descargado por la app. */
+/** Un archivo descargado por la app. */
 data class DownloadEntry(
     val id: String,
     val title: String,
@@ -21,21 +22,23 @@ data class DownloadEntry(
     val source: DlSource,
     val format: DlFormat,
     val quality: String,
+    /** Ruta de las descargas antiguas en la carpeta privada (vacía si ya está en la pública). */
     val path: String,
     val sizeBytes: Long,
     val createdAt: Long,
+    /** content:// en Music/Zaza o Movies/Zaza (sobrevive a desinstalar la app). */
+    val uri: String = "",
 ) {
-    val file get() = File(path)
+    val playUri: Uri get() = if (uri.isNotBlank()) Uri.parse(uri) else Uri.fromFile(File(path))
 
-    /** Solo los MP3 de YouTube van al reproductor de música (pedido de Anthony). */
+    /** Solo los MP3 de YouTube van al reproductor de música. */
     val isMusic get() = format == DlFormat.MP3 && source == DlSource.YOUTUBE
 }
 
 /**
- * Índice propio de descargas. Los archivos viven en la carpeta privada de la app
- * (Android/data/.../files/descargas) con un ".nomedia", así que la galería y otras apps
- * no los mezclan, y el reproductor de música solo lista lo que está en este índice:
- * nunca los MP3 que ya hubiera en el teléfono.
+ * Índice de descargas. Los archivos viven en Music/Zaza y Movies/Zaza (públicas, no se borran al
+ * desinstalar) y este índice guarda lo que el archivo no tiene (miniatura, calidad, origen).
+ * Al abrir la app se completa con lo que haya en esas carpetas, así tras reinstalar vuelve todo.
  */
 object DownloadStore {
 
@@ -44,23 +47,50 @@ object DownloadStore {
     val entries: StateFlow<List<DownloadEntry>> = _entries.asStateFlow()
     private var loaded = false
 
-    fun folder(context: Context, format: DlFormat): File {
-        val base = context.getExternalFilesDir(null) ?: context.filesDir
-        val root = File(base, "descargas").apply { mkdirs() }
-        File(root, ".nomedia").let { if (!it.exists()) it.createNewFile() }
-        return File(root, if (format == DlFormat.MP3) "musica" else "videos").apply { mkdirs() }
-    }
+    /** Carpeta temporal privada para descargar y convertir antes de publicar. */
+    fun workDir(context: Context): File = File(context.cacheDir, "descargas").apply { mkdirs() }
 
     @Synchronized
     fun load(context: Context) {
         if (loaded) return
         loaded = true
         val f = File(context.filesDir, INDEX)
-        if (!f.exists()) return
-        _entries.value = runCatching {
+        val saved = if (!f.exists()) emptyList() else runCatching {
             val arr = JSONArray(f.readText())
-            (0 until arr.length()).map { fromJson(arr.getJSONObject(it)) }.filter { it.file.exists() }
+            (0 until arr.length()).map { fromJson(arr.getJSONObject(it)) }
         }.getOrDefault(emptyList())
+        _entries.value = saved
+        migrateAndRescan(context)
+    }
+
+    /** Vuelve a leer las carpetas públicas (por ejemplo tras dar permiso de lectura). */
+    @Synchronized
+    fun refresh(context: Context) {
+        load(context)
+        migrateAndRescan(context)
+    }
+
+    private fun migrateAndRescan(context: Context) {
+        // 1) Descargas viejas en la carpeta privada → carpeta pública.
+        val migrated = _entries.value.map { e ->
+            if (e.uri.isBlank() && e.path.isNotBlank() && File(e.path).exists()) {
+                runCatching {
+                    val album = if (e.source == DlSource.INSTAGRAM) MediaLibrary.ALBUM_INSTAGRAM else MediaLibrary.ALBUM_YOUTUBE
+                    val uri = MediaLibrary.publish(context, File(e.path), e.format, e.title, e.author, album)
+                    File(e.path).delete()
+                    e.copy(uri = uri, path = "")
+                }.getOrDefault(e)
+            } else e
+        }
+        // 2) Quitar lo que ya no existe.
+        val alive = migrated.filter { e ->
+            if (e.uri.isNotBlank()) MediaLibrary.exists(context, e.uri) else File(e.path).exists()
+        }
+        // 3) Añadir lo que esté en Music/Zaza y Movies/Zaza pero no en el índice (reinstalación).
+        val known = alive.map { it.uri }.toSet()
+        val found = MediaLibrary.rescan(context).filter { it.uri !in known }
+        _entries.value = (alive + found).sortedByDescending { it.createdAt }
+        save(context)
     }
 
     @Synchronized
@@ -70,10 +100,9 @@ object DownloadStore {
         save(context)
     }
 
+    /** Quita del índice (el archivo ya se borró o el usuario lo confirmó). */
     @Synchronized
-    fun delete(context: Context, id: String) {
-        load(context)
-        _entries.value.firstOrNull { it.id == id }?.file?.delete()
+    fun forget(context: Context, id: String) {
         _entries.value = _entries.value.filterNot { it.id == id }
         save(context)
     }
@@ -88,6 +117,7 @@ object DownloadStore {
         put("id", e.id); put("title", e.title); put("author", e.author)
         put("thumb", e.thumbnailUrl ?: ""); put("source", e.source.name); put("format", e.format.name)
         put("quality", e.quality); put("path", e.path); put("size", e.sizeBytes); put("created", e.createdAt)
+        put("uri", e.uri)
     }
 
     private fun fromJson(o: JSONObject) = DownloadEntry(
@@ -98,9 +128,10 @@ object DownloadStore {
         source = runCatching { DlSource.valueOf(o.getString("source")) }.getOrDefault(DlSource.YOUTUBE),
         format = runCatching { DlFormat.valueOf(o.getString("format")) }.getOrDefault(DlFormat.MP4),
         quality = o.optString("quality"),
-        path = o.getString("path"),
+        path = o.optString("path"),
         sizeBytes = o.optLong("size"),
         createdAt = o.optLong("created"),
+        uri = o.optString("uri"),
     )
 
     /** Nombre de archivo seguro y único dentro de [dir]. */

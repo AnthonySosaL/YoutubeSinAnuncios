@@ -30,6 +30,7 @@ sealed class Screen(val route: String) {
 
     data object MyDownloads : Screen("downloads")
     data object Music : Screen("music")
+    data object NowPlaying : Screen("now_playing")
     data object InstagramLogin : Screen("instagram_login")
 
     data object LocalVideo : Screen("local/{id}") {

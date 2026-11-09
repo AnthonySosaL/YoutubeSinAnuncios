@@ -25,6 +25,13 @@ object HttpDownloader {
     // Mismo User-Agent que el reproductor (el de Android): con el de un navegador YouTube respondía 403.
     private val userAgent: String = System.getProperty("http.agent")?.takeIf { it.isNotBlank() } ?: "Dalvik/2.1.0 (Linux; U; Android 14)"
 
+    /** Descarga pequeña en memoria (miniatura para la portada del MP3). */
+    fun bytes(url: String): ByteArray =
+        client.newCall(Request.Builder().url(url).header("User-Agent", userAgent).build()).execute().use { r ->
+            if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
+            r.body!!.bytes()
+        }
+
     suspend fun download(
         url: String,
         target: File,

@@ -82,7 +82,7 @@ object DownloadQueue {
     }
 
     private suspend fun downloadVideo(app: Context, o: DownloadOptions, c: VideoChoice, t: DownloadTask): DownloadEntry {
-        val target = DownloadStore.uniqueFile(DownloadStore.folder(app, DlFormat.MP4), o.title, "mp4")
+        val target = File(DownloadStore.workDir(app), "${t.id}.mp4")
         val headers = if (o.source == DlSource.INSTAGRAM) InstagramResolver.mediaHeaders else emptyMap()
         if (c.audioUrl == null) {
             fetch(c.videoUrl, target, t.id, 0f, 1f, headers)
@@ -100,17 +100,21 @@ object DownloadQueue {
                 tmpV.delete(); tmpA.delete()
             }
         }
-        return entry(o, DlFormat.MP4, c.label, target)
+        return publish(app, o, DlFormat.MP4, c.label, target)
     }
 
     private suspend fun downloadAudio(app: Context, o: DownloadOptions, c: AudioChoice, t: DownloadTask): DownloadEntry {
-        val target = DownloadStore.uniqueFile(DownloadStore.folder(app, DlFormat.MP3), o.title, "mp3")
+        val target = File(DownloadStore.workDir(app), "${t.id}.mp3")
         val tmp = File(app.cacheDir, "${t.id}.src")
         val headers = if (o.source == DlSource.INSTAGRAM) InstagramResolver.mediaHeaders else emptyMap()
         try {
             fetch(c.url, tmp, t.id, 0f, 0.5f, headers)
             update(t.id) { it.copy(state = TaskState.CONVIRTIENDO, message = "Convirtiendo a MP3…") }
-            MediaTools.toMp3(tmp, target, c.mp3Kbps, o.title, o.author) { p ->
+            val cover = o.thumbnailUrl?.let { url ->
+                val jpg = url.replace("/vi_webp/", "/vi/").replace(".webp", ".jpg")
+                runCatching { HttpDownloader.bytes(jpg) }.getOrNull()
+            }
+            MediaTools.toMp3(tmp, target, c.mp3Kbps, o.title, o.author, albumOf(o), cover) { p ->
                 update(t.id) { it.copy(progress = 0.5f + p * 0.5f) }
             }
         } catch (e: Throwable) {
@@ -118,7 +122,25 @@ object DownloadQueue {
         } finally {
             tmp.delete()
         }
-        return entry(o, DlFormat.MP3, "MP3 ${c.mp3Kbps} kbps", target)
+        return publish(app, o, DlFormat.MP3, "MP3 ${c.mp3Kbps} kbps", target)
+    }
+
+    private fun albumOf(o: DownloadOptions) =
+        if (o.source == DlSource.INSTAGRAM) MediaLibrary.ALBUM_INSTAGRAM else MediaLibrary.ALBUM_YOUTUBE
+
+    /** Mueve el archivo terminado a Music/Zaza o Movies/Zaza (si falla, queda en la carpeta privada). */
+    private fun publish(app: Context, o: DownloadOptions, f: DlFormat, quality: String, temp: File): DownloadEntry {
+        val size = temp.length()
+        val uri = runCatching { MediaLibrary.publish(app, temp, f, o.title, o.author, albumOf(o)) }.getOrNull()
+        val path = if (uri != null) {
+            temp.delete(); ""
+        } else {
+            val keep = DownloadStore.uniqueFile(File(app.getExternalFilesDir(null) ?: app.filesDir, "descargas"), o.title, f.ext)
+            keep.parentFile?.mkdirs()
+            temp.renameTo(keep)
+            keep.absolutePath
+        }
+        return entry(o, f, quality, path, uri.orEmpty(), size)
     }
 
     private suspend fun fetch(url: String, file: File, id: String, from: Float, to: Float, headers: Map<String, String>) {
@@ -128,10 +150,10 @@ object DownloadQueue {
         }
     }
 
-    private fun entry(o: DownloadOptions, f: DlFormat, quality: String, file: File) = DownloadEntry(
+    private fun entry(o: DownloadOptions, f: DlFormat, quality: String, path: String, uri: String, size: Long) = DownloadEntry(
         id = newId(), title = o.title, author = o.author, thumbnailUrl = o.thumbnailUrl, source = o.source,
-        format = f, quality = quality, path = file.absolutePath, sizeBytes = file.length(),
-        createdAt = System.currentTimeMillis(),
+        format = f, quality = quality, path = path, sizeBytes = size,
+        createdAt = System.currentTimeMillis(), uri = uri,
     )
 
     private fun update(id: String, change: (DownloadTask) -> DownloadTask) {

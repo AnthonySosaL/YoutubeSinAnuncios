@@ -1,12 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">My Application</string>
-    <string name="server_client_id"></string>
-    <string name="api_key"></string>
-    <string name="search_youtube">Search YouTube</string>
-    <string name="close">Close</string>
-    <string name="search">Search</string>
-    <string name="like">like</string>
-    <string name="historial">historial</string>
-
-
+    <string name="app_name">Zaza</string>
 </resources>

@@ -1,25 +1,18 @@
-import com.android.build.api.dsl.Packaging
-
 plugins {
     id("com.android.application")
-    id("com.google.gms.google-services") apply false
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
-    namespace = "com.example.myapplication"
-    compileSdk = 34
+    namespace = "com.vancedclean.app"
+    compileSdk = 35
 
-    packagingOptions {
-        resources.pickFirsts.add("META-INF/DEPENDENCIES")
-    }
     defaultConfig {
-        applicationId = "com.example.myapplication"
-        minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        applicationId = "com.vancedclean.app"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = 2
+        versionName = "2.0.0"
     }
 
     buildTypes {
@@ -28,32 +21,68 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
+
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.14"
+    }
 }
 
 dependencies {
+    // Compose BOM
+    val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
+    implementation(composeBom)
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    debugImplementation("androidx.compose.ui:ui-tooling")
 
-    implementation("androidx.appcompat:appcompat:1.2.0")
-    implementation("com.google.android.material:material:1.10.0")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    implementation ("com.google.android.gms:play-services-auth:20.2.0")
-    implementation ("com.github.bumptech.glide:glide:4.13.0")
-    annotationProcessor ("com.github.bumptech.glide:compiler:4.13.0")
-    implementation ("com.google.api-client:google-api-client-android:1.32.1")
-    implementation ("com.google.apis:google-api-services-youtube:v3-rev222-1.25.0")
-    implementation ("com.pierfrancescosoffritti.androidyoutubeplayer:core:12.1.0")
-    implementation ("com.google.api-client:google-api-client-gson:1.32.1")
-    implementation ("com.google.android.exoplayer:exoplayer:2.19.1")
-    implementation ("com.google.http-client:google-http-client-jackson2:1.40.1")
-    implementation ("com.google.android.material:material:1.4.0")
+    // AndroidX Core
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.navigation:navigation-compose:2.7.6")
 
-    implementation ("com.google.api-client:google-api-client-gson:1.33.0")
+    // NewPipe Extractor — el motor de YouTube
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.27.0")
 
+    // Media3 ExoPlayer — reproductor de video
+    implementation("androidx.media3:media3-exoplayer:1.2.1")
+    implementation("androidx.media3:media3-ui:1.2.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.2.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.2.1")
+
+    // OkHttp
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Room Database
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+
+    // Coil — carga de imágenes para Compose
+    implementation("io.coil-kt:coil-compose:2.5.0")
+
+    // Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // DataStore Preferences
+    implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+    // Media3 Session (background playback)
+    implementation("androidx.media3:media3-session:1.2.1")
 }

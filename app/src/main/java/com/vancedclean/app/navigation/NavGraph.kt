@@ -8,6 +8,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import androidx.compose.runtime.Composable
 import com.vancedclean.app.ui.ChannelScreen
+import com.vancedclean.app.ui.DownloadScreen
+import com.vancedclean.app.ui.InstagramLoginScreen
+import com.vancedclean.app.ui.LocalVideoScreen
+import com.vancedclean.app.ui.MusicScreen
+import com.vancedclean.app.ui.MyDownloadsScreen
 import com.vancedclean.app.ui.LibraryScreen
 import com.vancedclean.app.ui.LoginScreen
 import com.vancedclean.app.ui.MainScreen
@@ -55,6 +60,26 @@ fun NavGraph(
             )
         ) {
             PlaylistScreen(navController = navController)
+        }
+
+        composable(
+            route = Screen.Download.route,
+            arguments = listOf(navArgument(Screen.Download.ARG_URL) { type = NavType.StringType; defaultValue = "" })
+        ) { entry ->
+            DownloadScreen(navController, entry.arguments?.getString(Screen.Download.ARG_URL).orEmpty())
+        }
+
+        composable(Screen.MyDownloads.route) { MyDownloadsScreen(navController) }
+
+        composable(Screen.Music.route) { MusicScreen(navController) }
+
+        composable(Screen.InstagramLogin.route) { InstagramLoginScreen(navController) }
+
+        composable(
+            route = Screen.LocalVideo.route,
+            arguments = listOf(navArgument(Screen.LocalVideo.ARG_ID) { type = NavType.StringType })
+        ) { entry ->
+            LocalVideoScreen(navController, entry.arguments?.getString(Screen.LocalVideo.ARG_ID).orEmpty())
         }
 
         composable(Screen.Subscriptions.route) {

@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Download
+import com.vancedclean.app.ui.components.DownloadSheet
 import androidx.compose.material.icons.filled.WatchLater
 import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.outlined.ThumbUp
@@ -89,6 +91,8 @@ fun VideoDetails(
     var isDescriptionExpanded by remember { mutableStateOf(false) }
     var showComments by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
+    var showDownload by remember { mutableStateOf(false) }
+    if (showDownload) DownloadSheet(url = video.url, onDismiss = { showDownload = false })
     val commentsState by comments.state.collectAsState()
 
     if (showSaveDialog && video.videoId != null) {
@@ -193,6 +197,7 @@ fun VideoDetails(
                     onClick = onDislike
                 )
                 ActionChip(Icons.Default.Share, "Compartir") { shareVideo(context, video.url, video.title) }
+                ActionChip(Icons.Default.Download, "Descargar") { showDownload = true }
                 ActionChip(Icons.Default.WatchLater, "Ver más tarde") {
                     val id = video.videoId ?: return@ActionChip
                     scope.accountAction(context, "Guardado en Ver más tarde") {

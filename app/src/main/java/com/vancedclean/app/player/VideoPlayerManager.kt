@@ -92,6 +92,10 @@ object VideoPlayerManager {
         .setUsage(C.USAGE_MEDIA)
         .build()
 
+    private val _localId = MutableStateFlow<String?>(null)
+    /** Id de la descarga que suena ahora (reproducción sin internet), o null. */
+    val localId: StateFlow<String?> = _localId.asStateFlow()
+
     private val _endedCount = MutableStateFlow(0)
     /** Aumenta cada vez que un video termina (para la reproducción automática). */
     val endedCount: StateFlow<Int> = _endedCount.asStateFlow()
@@ -120,6 +124,18 @@ object VideoPlayerManager {
 
         override fun onPlayerError(error: PlaybackException) {
             handlePlayerError(error)
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            val item = mediaItem ?: return
+            if (_localId.value == null) return
+            _localId.value = item.mediaId
+            _nowPlaying.value = NowPlaying(
+                url = item.localConfiguration?.uri?.toString().orEmpty(),
+                title = item.mediaMetadata.title?.toString().orEmpty(),
+                channelName = item.mediaMetadata.artist?.toString().orEmpty(),
+                thumbnailUrl = item.mediaMetadata.artworkUri?.toString().orEmpty(),
+            )
         }
 
         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -151,6 +167,50 @@ object VideoPlayerManager {
 
     fun getPlayer(): ExoPlayer? = player
 
+    /**
+     * Reproduce archivos descargados (sin internet). Con varias canciones arma una lista
+     * que avanza sola; cierra antes el video de YouTube que estuviera abierto.
+     */
+    fun playLocal(context: Context, items: List<com.vancedclean.app.download.DownloadEntry>, startIndex: Int = 0, shuffle: Boolean = false) {
+        if (items.isEmpty()) return
+        if (PlayerSheet.videoUrl.value != null) PlayerSheet.close()
+        val p = createPlayer(context)
+        _error.value = null
+        _source.value = null
+        _quality.value = null
+        _subtitle.value = null
+        _blockedByCall.value = false
+        val mediaItems = items.map { e ->
+            MediaItem.Builder()
+                .setUri(Uri.fromFile(e.file))
+                .setMediaId(e.id)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(e.title)
+                        .setArtist(e.author)
+                        .setArtworkUri(e.thumbnailUrl?.let { Uri.parse(it) })
+                        .build()
+                )
+                .build()
+        }
+        val start = items[startIndex.coerceIn(0, items.lastIndex)]
+        _localId.value = start.id
+        _nowPlaying.value = NowPlaying(Uri.fromFile(start.file).toString(), start.title, start.author, start.thumbnailUrl.orEmpty())
+        restoreAudioFocusIfNoCall()
+        p.shuffleModeEnabled = shuffle
+        p.setMediaItems(mediaItems, startIndex.coerceIn(0, items.lastIndex), 0L)
+        p.prepare()
+        p.setPlaybackSpeed(1f)
+        p.playWhenReady = true
+        wantsToPlay = true
+        checkBlockedByCall()
+        appContext?.let { startBackgroundPlayback(it) }
+    }
+
+    fun next() { player?.takeIf { it.hasNextMediaItem() }?.seekToNextMediaItem() }
+
+    fun previous() { player?.seekToPrevious() }
+
     /** Reproduce un video eligiendo la calidad según Ajustes (o la indicada). */
     fun playSource(
         source: PlaybackSource,
@@ -161,6 +221,8 @@ object VideoPlayerManager {
     ) {
         val currentPlayer = player ?: return
 
+        _localId.value = null
+        player?.shuffleModeEnabled = false
         if (fallbackForUrl != metadata.url) {
             fallbackForUrl = metadata.url
             failedQualities.clear()
@@ -385,6 +447,7 @@ object VideoPlayerManager {
         _subtitle.value = null
         _blockedByCall.value = false
         wantsToPlay = false
+        _localId.value = null
     }
 
     fun handlePlayerError(error: PlaybackException) {

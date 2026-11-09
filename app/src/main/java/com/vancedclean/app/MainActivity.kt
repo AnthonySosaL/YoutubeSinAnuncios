@@ -43,6 +43,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         requestNotificationPermission()
         observeSettings()
+        com.vancedclean.app.download.InstagramResolver.appContext = applicationContext
+        lifecycleScope.launch(Dispatchers.IO) { com.vancedclean.app.download.DownloadStore.load(applicationContext) }
         // Última pulsación de Atrás (nada más que cerrar): termina el video y cierra la app de verdad.
         // Android 12+ solo la mandaría al fondo y el video seguiría ahí al volver.
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {

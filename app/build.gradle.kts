@@ -83,6 +83,9 @@ dependencies {
     // DataStore Preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
+    // Codificador MP3 en Java puro (port de LAME) para convertir el audio descargado
+    implementation("de.sciss:jump3r:1.0.5")
+
     // Media3 Session (background playback)
     implementation("androidx.media3:media3-session:1.2.1")
 }

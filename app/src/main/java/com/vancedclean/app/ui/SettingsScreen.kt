@@ -1,6 +1,10 @@
 package com.vancedclean.app.ui
 
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.MusicNote
+import com.vancedclean.app.navigation.Screen
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -159,6 +163,29 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
         ) {
+            SectionHeader("Descargas y música")
+
+            ClickItem(
+                icon = Icons.Default.Download,
+                title = "Descargar de YouTube o Instagram",
+                subtitle = "Pega un enlace y elige MP4 o MP3 con su calidad",
+                onClick = { navController.navigate(Screen.Download.createRoute()) }
+            )
+
+            ClickItem(
+                icon = Icons.Default.VideoLibrary,
+                title = "Mis descargas",
+                subtitle = "Videos y audios guardados para ver sin internet",
+                onClick = { navController.navigate(Screen.MyDownloads.route) }
+            )
+
+            ClickItem(
+                icon = Icons.Default.MusicNote,
+                title = "Reproductor de música",
+                subtitle = "Tus MP3 descargados de YouTube, sin internet",
+                onClick = { navController.navigate(Screen.Music.route) }
+            )
+
             SectionHeader("Apariencia")
 
             SwitchItem(

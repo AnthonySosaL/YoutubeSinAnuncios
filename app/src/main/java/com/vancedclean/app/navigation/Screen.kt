@@ -23,6 +23,20 @@ sealed class Screen(val route: String) {
             "playlist/" + android.net.Uri.encode(playlistId) + "?title=" + android.net.Uri.encode(title)
     }
 
+    data object Download : Screen("download?url={url}") {
+        const val ARG_URL = "url"
+        fun createRoute(url: String = ""): String = "download?url=" + android.net.Uri.encode(url)
+    }
+
+    data object MyDownloads : Screen("downloads")
+    data object Music : Screen("music")
+    data object InstagramLogin : Screen("instagram_login")
+
+    data object LocalVideo : Screen("local/{id}") {
+        const val ARG_ID = "id"
+        fun createRoute(id: String): String = "local/" + android.net.Uri.encode(id)
+    }
+
     data object Subscriptions : Screen("subscriptions")
     data object Library : Screen("library")
     data object Settings : Screen("settings")

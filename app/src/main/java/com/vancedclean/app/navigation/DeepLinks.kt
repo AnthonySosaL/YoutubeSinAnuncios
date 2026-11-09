@@ -23,6 +23,10 @@ object DeepLinks {
 
     private fun open(uri: Uri, navController: NavController) {
         val host = uri.host?.lowercase() ?: return
+        if (host.endsWith("instagram.com") || host == "instagr.am") {
+            navController.navigate(Screen.Download.createRoute(uri.toString()))
+            return
+        }
         if (!host.endsWith("youtube.com") && host != "youtu.be") return
         val segments = uri.pathSegments
 
